@@ -133,6 +133,14 @@ python -m src.screenshot_analyzer "C:\path\to\dashboard_screenshot.png" TikTok
 
 OCR requires the local Tesseract executable to be installed and available to `pytesseract`. If OCR or OpenCV fails, the module returns missing fields safely instead of crashing.
 
+On Windows, install Tesseract with:
+
+```powershell
+winget install --id UB-Mannheim.TesseractOCR -e --accept-package-agreements --accept-source-agreements
+```
+
+Then restart Streamlit. If OCR is still unavailable, use the dashboard's visible metric override boxes for views, likes, comments, and shares. Streamlit Community Cloud installs OCR from `packages.txt`.
+
 ## Adding Real Reviewed Submissions Later
 
 Add new reviewed rows to the original schema or a new CSV with the same key fields. Keep labels as:

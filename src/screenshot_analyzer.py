@@ -43,6 +43,8 @@ def _number(value: str) -> int | float | str:
         multiplier = 1_000_000_000
         cleaned = cleaned[:-1]
     cleaned = cleaned.strip()
+    if multiplier == 1 and re.fullmatch(r"\d+\.\d{3}", cleaned):
+        cleaned = cleaned.replace(".", "")
     try:
         number = float(cleaned) * multiplier
     except ValueError:
@@ -132,6 +134,10 @@ def _ocr_image(image_path: Path, timeout_seconds: int = 6, max_dimension: int = 
         from PIL import Image, ImageOps
         import pytesseract
 
+        configured_cmd = _find_tesseract_command()
+        if configured_cmd:
+            pytesseract.pytesseract.tesseract_cmd = configured_cmd
+
         image = Image.open(image_path)
         image = ImageOps.exif_transpose(image)
         image.thumbnail((max_dimension, max_dimension))
@@ -142,6 +148,30 @@ def _ocr_image(image_path: Path, timeout_seconds: int = 6, max_dimension: int = 
     except Exception as exc:
         result["error"] = f"OCR failed or is not configured: {exc}"
     return result
+
+
+def _find_tesseract_command() -> str | None:
+    """Find a local Tesseract executable without requiring PATH edits."""
+    import os
+    import shutil
+
+    configured = os.environ.get("TESSERACT_CMD")
+    if configured and Path(configured).exists():
+        return configured
+
+    on_path = shutil.which("tesseract")
+    if on_path:
+        return on_path
+
+    candidates = [
+        Path("C:/Program Files/Tesseract-OCR/tesseract.exe"),
+        Path("C:/Program Files (x86)/Tesseract-OCR/tesseract.exe"),
+        Path.home() / "AppData/Local/Programs/Tesseract-OCR/tesseract.exe",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return None
 
 
 def _smooth(values: list[float], window: int = 3) -> list[float]:
@@ -372,6 +402,33 @@ def analyze_screenshot(path: str | Path) -> dict[str, Any]:
     return result
 
 
+def _coerce_override(value: Any) -> int | float | str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return None
+        return _number(value)
+    return value
+
+
+def apply_metric_overrides(analysis: dict[str, Any], overrides: dict[str, Any] | None) -> dict[str, Any]:
+    """Apply reviewer-entered visible metrics after OCR/CV analysis."""
+    if not overrides:
+        return analysis
+
+    fields = analysis.setdefault("fields", {})
+    sources = analysis.setdefault("field_sources", {})
+    for field in ("views", "likes", "comments", "shares"):
+        value = _coerce_override(overrides.get(field))
+        if value is not None:
+            fields[field] = value
+            sources[field] = "manual_override"
+    analysis["missing_fields"] = [key for key, value in fields.items() if value is None]
+    return analysis
+
+
 def extracted_metrics_to_submission(
     analysis: dict[str, Any],
     platform: str | None = None,
@@ -398,12 +455,13 @@ def analyze_dashboard_screenshot(
     path: str | Path,
     platform: str | None = None,
     extra_fields: dict[str, Any] | None = None,
+    metric_overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Analyze a screenshot and run the extracted values through the fraud model."""
     from .moderation import moderation_decision_from_prediction
     from .predict import predict_one
 
-    analysis = analyze_screenshot(path)
+    analysis = apply_metric_overrides(analyze_screenshot(path), metric_overrides)
     submission = extracted_metrics_to_submission(analysis, platform=platform, extra_fields=extra_fields)
     prediction = predict_one(submission)
     moderation = moderation_decision_from_prediction(

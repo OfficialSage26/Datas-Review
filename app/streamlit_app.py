@@ -74,6 +74,16 @@ def display_value(value: object) -> str:
     return "" if value is None else str(value)
 
 
+def parse_metric_override(label: str, raw_value: str) -> int | None:
+    cleaned = raw_value.strip().replace(",", "")
+    if not cleaned:
+        return None
+    if not cleaned.isdigit():
+        st.error(f"{label} override must be a whole number.")
+        st.stop()
+    return int(cleaned)
+
+
 with tab_screenshot:
     st.subheader("Upload Submission Screenshot")
     platform_from_reviewer = st.selectbox(
@@ -99,10 +109,29 @@ with tab_screenshot:
         if upload_size and upload_size > MAX_SCREENSHOT_UPLOAD_BYTES:
             st.warning("This screenshot is large and may take longer to analyze. Crop to the visible submission card if the review is slow.")
 
+        with st.expander("Visible metric override", expanded=True):
+            st.caption("Use these boxes when OCR cannot read the screenshot. Leave a field blank to use OCR if available.")
+            override_cols = st.columns(4)
+            with override_cols[0]:
+                views_override = st.text_input("Views", placeholder="102146", key="screenshot_views_override")
+            with override_cols[1]:
+                likes_override = st.text_input("Likes", placeholder="105", key="screenshot_likes_override")
+            with override_cols[2]:
+                comments_override = st.text_input("Comments", placeholder="0", key="screenshot_comments_override")
+            with override_cols[3]:
+                shares_override = st.text_input("Shares", placeholder="75", key="screenshot_shares_override")
+
         analyze_now = st.button("Analyze Uploaded Screenshot", type="primary", key="analyze_screenshot_button")
         if not analyze_now:
             st.info("Click Analyze Uploaded Screenshot to run OCR, graph vision, and fraud review.")
         else:
+            metric_overrides = {
+                "views": parse_metric_override("Views", views_override),
+                "likes": parse_metric_override("Likes", likes_override),
+                "comments": parse_metric_override("Comments", comments_override),
+                "shares": parse_metric_override("Shares", shares_override),
+            }
+            metric_overrides = {key: value for key, value in metric_overrides.items() if value is not None}
             suffix = Path(uploaded_image.name).suffix.lower()
             if suffix not in {".png", ".jpg", ".jpeg"}:
                 suffix = ".png"
@@ -117,6 +146,7 @@ with tab_screenshot:
                         temp_path,
                         platform=None if platform_from_reviewer == "Unknown" else platform_from_reviewer,
                         extra_fields={"campaign_requirements": campaign_requirements.strip()} if campaign_requirements.strip() else None,
+                        metric_overrides=metric_overrides,
                     )
             except Exception as exc:
                 show_fail_closed_upload_error(exc)
@@ -132,9 +162,12 @@ with tab_screenshot:
 
                 analysis = analysis_result["screenshot_analysis"]
                 fields = analysis.get("fields", {})
+                sources = analysis.get("field_sources", {})
                 graph_vision = analysis.get("graph_vision", {})
                 if analysis.get("error"):
-                    st.warning(analysis["error"])
+                    with st.expander("OCR status"):
+                        st.write("OCR is unavailable on this machine. Visible metric overrides were used where provided.")
+                        st.caption(str(analysis["error"]))
                 st.markdown("**Extracted Screenshot Fields:**")
                 st.dataframe(
                     pd.DataFrame(
@@ -150,6 +183,7 @@ with tab_screenshot:
                             {"field": "cv_available", "value": display_value(analysis.get("cv_available"))},
                             {"field": "graph_confidence", "value": display_value(graph_vision.get("confidence"))},
                             {"field": "visible_action", "value": display_value(graph_vision.get("action_visible"))},
+                            {"field": "metric_overrides_used", "value": display_value(", ".join(sorted(sources.keys())))},
                         ]
                     ),
                     width="stretch",

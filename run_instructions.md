@@ -94,6 +94,14 @@ python -m src.screenshot_analyzer "C:\path\to\dashboard_screenshot.png" TikTok
 
 This uses OCR for visible metrics and computer vision for graph shape, then runs the extracted values through the fraud model. If OCR is not configured, the command still returns a safe result with missing fields.
 
+To enable OCR on Windows:
+
+```powershell
+winget install --id UB-Mannheim.TesseractOCR -e --accept-package-agreements --accept-source-agreements
+```
+
+Restart Streamlit after installing. Without OCR, use the `Visible metric override` boxes in the screenshot tab.
+
 ## Notes
 
 - The original files in `Datas/` are not overwritten.

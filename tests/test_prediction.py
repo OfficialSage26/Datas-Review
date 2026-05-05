@@ -11,7 +11,7 @@ from src.feature_engineering import build_feature_frame, create_graph_features
 from src.moderation import moderation_decision_from_prediction
 from src.predict import predict_one
 from src.risk_scoring import calculate_risk_score, risk_level
-from src.screenshot_analyzer import extract_visible_metrics, extracted_metrics_to_submission
+from src.screenshot_analyzer import apply_metric_overrides, extract_visible_metrics, extracted_metrics_to_submission
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -131,6 +131,11 @@ def test_ocr_text_metric_extraction_supports_label_before_and_after() -> None:
     assert fields["status"].lower().startswith("pending")
 
 
+def test_ocr_text_metric_extraction_handles_dot_thousands_separator() -> None:
+    fields = extract_visible_metrics("Views 102.146 Likes 105 Comments 0 Shares 75")
+    assert fields["views"] == 102146
+
+
 def test_ocr_text_metric_extraction_supports_whop_stacked_layout() -> None:
     fields = extract_visible_metrics("Views\n102,146\nLikes\n105\nComments\n0\nShares\n75\nApprove")
     assert fields["views"] == 102146
@@ -220,3 +225,19 @@ def test_root_streamlit_app_rerenders_after_screenshot_upload() -> None:
     assert any(title.value == "AI Video Fraud Review" for title in app.title)
     assert any(success.value == "File ready: sample.png" for success in app.success)
     assert any(button.label == "Analyze Uploaded Screenshot" for button in app.button)
+
+
+def test_metric_overrides_replace_missing_ocr_fields() -> None:
+    analysis = {
+        "fields": {"platform": "TikTok", "views": None, "likes": None, "comments": None, "shares": None},
+        "missing_fields": ["views", "likes", "comments", "shares"],
+    }
+    updated = apply_metric_overrides(
+        analysis,
+        {"views": "102,146", "likes": "105", "comments": "0", "shares": "75"},
+    )
+
+    assert updated["fields"]["views"] == 102146
+    assert updated["fields"]["comments"] == 0
+    assert "views" not in updated["missing_fields"]
+    assert updated["field_sources"]["shares"] == "manual_override"
