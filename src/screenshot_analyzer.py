@@ -23,6 +23,12 @@ METRIC_ALIASES = {
     "status": ["status", "decision"],
 }
 
+PLATFORM_KEYWORDS = {
+    "TikTok": ["tiktok", "tik tok"],
+    "Instagram": ["instagram", "reels", "reel"],
+    "YouTube Shorts": ["youtube", "shorts", "yt shorts"],
+}
+
 
 def _number(value: str) -> int | float | str:
     cleaned = value.replace(",", "").replace("$", "").strip().lower()
@@ -65,21 +71,54 @@ def _extract_metric(text: str, aliases: list[str]) -> int | float | str | None:
     return None
 
 
+def _extract_metric_from_lines(lines: list[str], aliases: list[str]) -> int | float | str | None:
+    for index, line in enumerate(lines):
+        lowered = line.lower()
+        if not any(alias in lowered for alias in aliases):
+            continue
+        tail = re.sub("|".join(re.escape(alias) for alias in aliases), "", line, flags=re.IGNORECASE).strip(" :#-\t")
+        if re.search(r"\d", tail):
+            match = re.search(r"\$?\d+(?:[,.]\d+)*(?:\.\d+)?\s*[kKmMbB]?", tail)
+            if match:
+                return _number(match.group(0))
+        for next_line in lines[index + 1 : index + 4]:
+            match = re.search(r"\$?\d+(?:[,.]\d+)*(?:\.\d+)?\s*[kKmMbB]?", next_line)
+            if match:
+                return _number(match.group(0))
+    return None
+
+
 def _extract_status(text: str) -> str | None:
     match = re.search(r"(?:status|decision)\s*[:#\-]?\s*([A-Za-z ]{3,40})", text, flags=re.IGNORECASE)
-    if not match:
-        return None
-    return match.group(1).strip()
+    if match:
+        return match.group(1).strip()
+    if re.search(r"\bapprove\b|\bapproved\b", text, flags=re.IGNORECASE):
+        return "Approve visible"
+    if re.search(r"\breject\b|\brejected\b", text, flags=re.IGNORECASE):
+        return "Reject visible"
+    return None
+
+
+def _extract_platform(text: str) -> str | None:
+    lowered = text.lower()
+    for platform, keywords in PLATFORM_KEYWORDS.items():
+        if any(keyword in lowered for keyword in keywords):
+            return platform
+    return None
 
 
 def extract_visible_metrics(text: str) -> dict[str, Any]:
     """Extract visible metric fields from OCR text."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
     fields: dict[str, Any] = {}
     for field, aliases in METRIC_ALIASES.items():
         if field == "status":
             fields[field] = _extract_status(text)
         else:
             fields[field] = _extract_metric(text, aliases)
+            if fields[field] is None:
+                fields[field] = _extract_metric_from_lines(lines, aliases)
+    fields["platform"] = _extract_platform(text)
     return fields
 
 
@@ -250,11 +289,34 @@ def _detect_graph_with_cv(image_path: Path) -> dict[str, Any]:
             points.append((x_mid, y_value))
 
         classified = _classify_graph_points(points)
+        classified["action_visible"] = _detect_visible_action_label(image)
         result.update(classified)
         result["points_detected"] = classified.get("points_detected", len(points))
     except Exception as exc:
         result["error"] = f"Graph computer vision failed: {exc}"
     return result
+
+
+def _detect_visible_action_label(image: Any) -> str | None:
+    try:
+        import cv2
+        import numpy as np
+
+        height, width = image.shape[:2]
+        bottom = image[int(height * 0.82) : height, 0:width]
+        hsv = cv2.cvtColor(bottom, cv2.COLOR_BGR2HSV)
+        green_mask = cv2.inRange(hsv, np.array([35, 35, 35]), np.array([95, 255, 255]))
+        red_mask_1 = cv2.inRange(hsv, np.array([0, 35, 35]), np.array([12, 255, 255]))
+        red_mask_2 = cv2.inRange(hsv, np.array([165, 35, 35]), np.array([179, 255, 255]))
+        green_ratio = float(np.count_nonzero(green_mask)) / max(green_mask.size, 1)
+        red_ratio = float(np.count_nonzero(red_mask_1 | red_mask_2)) / max(red_mask_1.size, 1)
+        if green_ratio > 0.02 and green_ratio > red_ratio:
+            return "Approve button visible"
+        if red_ratio > 0.02 and red_ratio > green_ratio:
+            return "Reject button visible"
+    except Exception:
+        return None
+    return None
 
 
 def analyze_screenshot(path: str | Path) -> dict[str, Any]:
@@ -273,10 +335,11 @@ def analyze_screenshot(path: str | Path) -> dict[str, Any]:
             "saves": None,
             "payout": None,
             "status": None,
+            "platform": None,
         },
         "graph_shape": "unknown",
         "graph_vision": {},
-        "missing_fields": ["views", "likes", "comments", "shares", "saves", "payout", "status"],
+        "missing_fields": ["views", "likes", "comments", "shares", "saves", "payout", "status", "platform"],
         "error": None,
     }
     if not image_path.exists():
@@ -310,7 +373,7 @@ def extracted_metrics_to_submission(
     """Convert screenshot analysis into a prediction-ready submission dict."""
     fields = dict(analysis.get("fields") or {})
     submission = {
-        "platform": platform or fields.pop("platform", None) or "unknown",
+        "platform": platform or fields.get("platform") or "unknown",
         "views": fields.get("views") or 0,
         "likes": fields.get("likes") or 0,
         "comments": fields.get("comments") or 0,
@@ -330,15 +393,23 @@ def analyze_dashboard_screenshot(
     extra_fields: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Analyze a screenshot and run the extracted values through the fraud model."""
+    from .moderation import moderation_decision_from_prediction
     from .predict import predict_one
 
     analysis = analyze_screenshot(path)
     submission = extracted_metrics_to_submission(analysis, platform=platform, extra_fields=extra_fields)
     prediction = predict_one(submission)
+    moderation = moderation_decision_from_prediction(
+        prediction,
+        screenshot_analysis=analysis,
+        submission=submission,
+        campaign_requirements=(extra_fields or {}).get("campaign_requirements") if extra_fields else None,
+    )
     return {
         "screenshot_analysis": analysis,
         "submission": submission,
         "prediction": prediction,
+        "moderation": moderation,
     }
 
 

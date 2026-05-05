@@ -69,7 +69,14 @@ http://127.0.0.1:8000/docs
 streamlit run streamlit_app.py
 ```
 
-Streamlit will print the local dashboard URL.
+Streamlit will print the local dashboard URL. Use the `Screenshot Review` tab to upload a Whop/TikTok analytics screenshot directly.
+
+The screenshot review's first result is always one of:
+
+```text
+Decision: Approved
+Decision: Reject: Send Full Analytics
+```
 
 For Streamlit Community Cloud, use:
 

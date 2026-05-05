@@ -104,7 +104,16 @@ Example request:
 streamlit run streamlit_app.py
 ```
 
-The dashboard supports manual metric entry, CSV upload, batch predictions, risk scores, graph analysis, suspicious signals, creator-facing reasons, and feature importance.
+The dashboard supports screenshot upload, manual metric entry, CSV upload, batch predictions, risk scores, graph analysis, suspicious signals, creator-facing reasons, and feature importance.
+
+The screenshot review tab is strict and moderator-facing. Its first output is always one of:
+
+```text
+Decision: Approved
+Decision: Reject: Send Full Analytics
+```
+
+Upload a Whop/TikTok-style analytics screenshot to extract visible metrics and graph shape, then run the extracted evidence through the model. If anything is missing, unclear, suspicious, or not fully proven, the screenshot review returns `Reject: Send Full Analytics`.
 
 For Streamlit Community Cloud, use:
 

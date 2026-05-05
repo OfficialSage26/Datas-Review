@@ -3,9 +3,10 @@ from __future__ import annotations
 import pandas as pd
 
 from src.feature_engineering import build_feature_frame, create_graph_features
+from src.moderation import moderation_decision_from_prediction
 from src.predict import predict_one
 from src.risk_scoring import calculate_risk_score, risk_level
-from src.screenshot_analyzer import extract_visible_metrics
+from src.screenshot_analyzer import extract_visible_metrics, extracted_metrics_to_submission
 
 
 def test_ratio_and_graph_features_with_missing_optional_fields() -> None:
@@ -120,3 +121,78 @@ def test_ocr_text_metric_extraction_supports_label_before_and_after() -> None:
     assert fields["shares"] == 75
     assert fields["payout"] == 12.5
     assert fields["status"].lower().startswith("pending")
+
+
+def test_ocr_text_metric_extraction_supports_whop_stacked_layout() -> None:
+    fields = extract_visible_metrics("Views\n102,146\nLikes\n105\nComments\n0\nShares\n75\nApprove")
+    assert fields["views"] == 102146
+    assert fields["likes"] == 105
+    assert fields["comments"] == 0
+    assert fields["shares"] == 75
+    assert fields["status"] == "Approve visible"
+
+
+def test_strict_moderation_rejects_high_views_zero_comments() -> None:
+    prediction = predict_one(
+        {
+            "platform": "TikTok",
+            "views": 102146,
+            "likes": 105,
+            "comments": 0,
+            "shares": 75,
+            "graph_pattern": "flatline_then_vertical_spike",
+            "avg_views_30d": 2176,
+        }
+    )
+    moderation = prediction["moderation"]
+    assert moderation["decision"] == "Reject: Send Full Analytics"
+    assert moderation["confidence"] in {"High", "Medium"}
+    assert any("zero comments" in item.lower() for item in moderation["red_flags"])
+
+
+def test_strict_moderation_rejects_missing_screenshot_metrics() -> None:
+    prediction = predict_one({"platform": "TikTok", "views": 0, "likes": 0, "comments": 0, "shares": 0})
+    analysis = {
+        "fields": {"views": None, "likes": None, "comments": None, "shares": None},
+        "graph_shape": "unknown",
+        "error": "OCR failed",
+    }
+    moderation = moderation_decision_from_prediction(
+        prediction,
+        screenshot_analysis=analysis,
+        submission={"platform": "TikTok", "views": 0, "likes": 0, "comments": 0, "shares": 0},
+    )
+    assert moderation["decision"] == "Reject: Send Full Analytics"
+    assert any("missing visible metric" in item.lower() for item in moderation["red_flags"])
+
+
+def test_strict_moderation_can_approve_clean_proportional_submission() -> None:
+    prediction = predict_one(
+        {
+            "platform": "TikTok",
+            "views": 50000,
+            "likes": 3500,
+            "comments": 220,
+            "shares": 300,
+            "graph_pattern": "smooth_gradual",
+            "completion_rate": 0.55,
+            "profile_traffic_pct": 0.10,
+            "tier1_audience_pct": 0.72,
+            "creator_followers": 25000,
+            "avg_views_30d": 12000,
+        }
+    )
+    moderation = prediction["moderation"]
+    assert moderation["decision"] == "Approved"
+    assert moderation["red_flags"] == ["No major red flags found."]
+
+
+def test_screenshot_analysis_converts_fields_to_submission() -> None:
+    analysis = {
+        "fields": {"platform": "TikTok", "views": 102146, "likes": 105, "comments": 0, "shares": 75},
+        "graph_shape": "flatline_then_vertical_spike",
+    }
+    submission = extracted_metrics_to_submission(analysis)
+    assert submission["platform"] == "TikTok"
+    assert submission["views"] == 102146
+    assert submission["graph_pattern"] == "flatline_then_vertical_spike"

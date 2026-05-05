@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 import pandas as pd
@@ -14,13 +15,103 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.predict import predict_one, predict_submissions
+from src.moderation import format_moderation_output
+from src.screenshot_analyzer import analyze_dashboard_screenshot
 from src.train_model import METRICS_PATH
 
 
 st.set_page_config(page_title="AI Video Fraud Review", layout="wide")
 st.title("AI Video Fraud Review")
 
-tab_manual, tab_batch, tab_model = st.tabs(["Manual Review", "CSV Batch", "Model"])
+tab_screenshot, tab_manual, tab_batch, tab_model = st.tabs(["Screenshot Review", "Manual Review", "CSV Batch", "Model"])
+
+
+def show_moderation_result(result: dict) -> None:
+    moderation = result.get("moderation") or {}
+    decision = moderation.get("decision", result.get("decision", "Reject: Send Full Analytics"))
+    confidence = moderation.get("confidence", "Low")
+    if decision == "Approved":
+        st.success(f"Decision: {decision}")
+    else:
+        st.error(f"Decision: {decision}")
+    st.subheader(f"Confidence: {confidence}")
+    st.markdown("**Reason:**")
+    for item in moderation.get("reason", []):
+        st.markdown(f"- {item}")
+    st.markdown("**Red Flags:**")
+    for item in moderation.get("red_flags", ["No major red flags found."]):
+        st.markdown(f"- {item}")
+    st.markdown("**Mod Note:**")
+    st.info(moderation.get("mod_note", result.get("creator_facing_reason", "")))
+
+
+with tab_screenshot:
+    st.subheader("Upload Submission Screenshot")
+    platform_from_reviewer = st.selectbox(
+        "Platform",
+        ["TikTok", "Instagram", "YouTube Shorts", "Unknown"],
+        key="screenshot_platform",
+    )
+    campaign_requirements = st.text_area(
+        "Campaign requirements shown or expected",
+        placeholder="Optional. If requirements cannot be confirmed from the screenshot, the review will request full analytics.",
+        key="screenshot_campaign_requirements",
+    )
+    uploaded_image = st.file_uploader(
+        "Upload screenshot",
+        type=["png", "jpg", "jpeg"],
+        key="screenshot_upload",
+    )
+    if uploaded_image is not None:
+        st.image(uploaded_image, caption="Uploaded screenshot", use_container_width=True)
+        suffix = Path(uploaded_image.name).suffix or ".png"
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+                temp_file.write(uploaded_image.getbuffer())
+                temp_path = Path(temp_file.name)
+            analysis_result = analyze_dashboard_screenshot(
+                temp_path,
+                platform=None if platform_from_reviewer == "Unknown" else platform_from_reviewer,
+                extra_fields={"campaign_requirements": campaign_requirements.strip()} if campaign_requirements.strip() else None,
+            )
+        finally:
+            if temp_path and temp_path.exists():
+                temp_path.unlink(missing_ok=True)
+
+        show_moderation_result(analysis_result["prediction"] | {"moderation": analysis_result["moderation"]})
+
+        analysis = analysis_result["screenshot_analysis"]
+        fields = analysis.get("fields", {})
+        graph_vision = analysis.get("graph_vision", {})
+        st.markdown("**Extracted Screenshot Fields:**")
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {"field": "platform", "value": fields.get("platform") or analysis_result["submission"].get("platform")},
+                    {"field": "views", "value": fields.get("views")},
+                    {"field": "likes", "value": fields.get("likes")},
+                    {"field": "comments", "value": fields.get("comments")},
+                    {"field": "shares", "value": fields.get("shares")},
+                    {"field": "status", "value": fields.get("status")},
+                    {"field": "graph_pattern", "value": analysis.get("graph_shape")},
+                    {"field": "ocr_available", "value": analysis.get("ocr_available")},
+                    {"field": "cv_available", "value": analysis.get("cv_available")},
+                    {"field": "graph_confidence", "value": graph_vision.get("confidence")},
+                    {"field": "visible_action", "value": graph_vision.get("action_visible")},
+                ]
+            ),
+            use_container_width=True,
+        )
+        with st.expander("Internal model details"):
+            prediction = analysis_result["prediction"]
+            st.write("Risk score:", prediction["risk_score"])
+            st.write("Risk level:", prediction["risk_level"])
+            st.write("Predicted class:", prediction["predicted_class"])
+            st.write("Graph analysis:", prediction["review"]["graph_analysis"])
+            st.write("Suspicious signals:", prediction["review"]["suspicious_signals"])
+            st.write("Missing evidence:", prediction["review"]["missing_evidence_needed"])
+            st.json(analysis_result)
 
 with tab_manual:
     col_left, col_right = st.columns(2)
@@ -69,7 +160,7 @@ with tab_manual:
                 "comment_quality": comment_quality,
             }
         )
-        st.metric("Decision", result["decision"])
+        show_moderation_result(result)
         st.metric("Fraud Risk Score", result["risk_score"])
         st.metric("Risk Level", result["risk_level"])
         st.write("Predicted class:", result["predicted_class"])
@@ -92,11 +183,12 @@ with tab_batch:
                 rows.append(
                     {
                         "row": index,
-                        "decision": result["decision"],
+                        "decision": result["moderation"]["decision"],
+                        "confidence": result["moderation"]["confidence"],
                         "risk_score": result["risk_score"],
                         "risk_level": result["risk_level"],
                         "predicted_class": result["predicted_class"],
-                        "creator_facing_reason": result["creator_facing_reason"],
+                        "mod_note": result["moderation"]["mod_note"],
                     }
                 )
             st.dataframe(pd.DataFrame(rows))
@@ -116,4 +208,3 @@ with tab_model:
             st.dataframe(importance)
     else:
         st.warning("No trained model metrics found yet. Run: python -m src.train_model")
-

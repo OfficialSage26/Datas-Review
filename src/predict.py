@@ -9,6 +9,7 @@ import pandas as pd
 
 from .explanation_generator import format_review_text, generate_review
 from .feature_engineering import build_feature_frame
+from .moderation import format_moderation_output, moderation_decision_from_prediction
 from .risk_scoring import (
     calculate_risk_score,
     class_from_score,
@@ -104,6 +105,8 @@ def predict_submissions(
         }
         if probabilities:
             result["model_probabilities"] = {key: round(float(value), 4) for key, value in probabilities.items()}
+        result["moderation"] = moderation_decision_from_prediction(result, submission=dict(row))
+        result["moderation_report"] = format_moderation_output(result["moderation"])
         results.append(result)
     return results
 
@@ -132,6 +135,8 @@ def main() -> None:
         "audience_location": None,
     }
     result = predict_one(sample)
+    print(result["moderation_report"])
+    print()
     print(result["report"])
 
 
