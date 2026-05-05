@@ -17,6 +17,13 @@ from src.screenshot_analyzer import apply_metric_overrides, extract_visible_metr
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _png_bytes(color: str = "#222222") -> bytes:
+    image = Image.new("RGB", (320, 180), color)
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
 def test_ratio_and_graph_features_with_missing_optional_fields() -> None:
     submissions = pd.DataFrame(
         [
@@ -134,6 +141,18 @@ def test_ocr_text_metric_extraction_supports_label_before_and_after() -> None:
 def test_ocr_text_metric_extraction_handles_dot_thousands_separator() -> None:
     fields = extract_visible_metrics("Views 102.146 Likes 105 Comments 0 Shares 75")
     assert fields["views"] == 102146
+    fields = extract_visible_metrics("Views 1.348.911 Likes 184.982 Comments 1.131 Shares 6.411")
+    assert fields["views"] == 1348911
+    assert fields["likes"] == 184982
+    assert fields["comments"] == 1131
+    assert fields["shares"] == 6411
+
+
+def test_ocr_text_metric_extraction_does_not_reuse_previous_metric_value() -> None:
+    fields = extract_visible_metrics("Views\n102.148\nLikes\n\n105\nComments\n°\nshares\n\ni\n")
+    assert fields["views"] == 102148
+    assert fields["likes"] == 105
+    assert fields["comments"] is None
 
 
 def test_ocr_text_metric_extraction_supports_whop_stacked_layout() -> None:
@@ -212,19 +231,30 @@ def test_screenshot_analysis_converts_fields_to_submission() -> None:
 
 
 def test_root_streamlit_app_rerenders_after_screenshot_upload() -> None:
-    image = Image.new("RGB", (320, 180), "#222222")
-    buffer = BytesIO()
-    image.save(buffer, format="PNG")
-
     app = AppTest.from_file(str(ROOT / "streamlit_app.py"), default_timeout=30)
     app.run()
-    app.file_uploader(key="screenshot_upload").upload("sample.png", buffer.getvalue(), "image/png")
+    app.file_uploader(key="screenshot_upload").upload("sample.png", _png_bytes(), "image/png")
     app.run(timeout=30)
 
     assert not app.exception
     assert any(title.value == "AI Video Fraud Review" for title in app.title)
     assert any(success.value == "File ready: sample.png" for success in app.success)
     assert any(button.label == "Analyze Uploaded Screenshot" for button in app.button)
+
+
+def test_screenshot_override_inputs_reset_for_new_upload() -> None:
+    app = AppTest.from_file(str(ROOT / "streamlit_app.py"), default_timeout=30)
+    app.run()
+    app.file_uploader(key="screenshot_upload").upload("first.png", _png_bytes("#222222"), "image/png")
+    app.run(timeout=30)
+    app.text_input[0].input("102146")
+    app.run(timeout=30)
+
+    app.file_uploader(key="screenshot_upload").upload("second.png", _png_bytes("#333333"), "image/png")
+    app.run(timeout=30)
+
+    assert not app.exception
+    assert [text_input.value for text_input in app.text_input[:4]] == ["", "", "", ""]
 
 
 def test_metric_overrides_replace_missing_ocr_fields() -> None:

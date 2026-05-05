@@ -104,6 +104,7 @@ with tab_screenshot:
     if uploaded_image is not None:
         st.success(f"File ready: {uploaded_image.name}")
         upload_size = getattr(uploaded_image, "size", None)
+        upload_signature = getattr(uploaded_image, "file_id", None) or f"{uploaded_image.name}_{upload_size}"
         if upload_size:
             st.caption(f"Upload size: {upload_size / 1024:.1f} KB")
         if upload_size and upload_size > MAX_SCREENSHOT_UPLOAD_BYTES:
@@ -113,13 +114,13 @@ with tab_screenshot:
             st.caption("Use these boxes when OCR cannot read the screenshot. Leave a field blank to use OCR if available.")
             override_cols = st.columns(4)
             with override_cols[0]:
-                views_override = st.text_input("Views", placeholder="102146", key="screenshot_views_override")
+                views_override = st.text_input("Views", placeholder="Leave blank for OCR", key=f"screenshot_views_override_{upload_signature}")
             with override_cols[1]:
-                likes_override = st.text_input("Likes", placeholder="105", key="screenshot_likes_override")
+                likes_override = st.text_input("Likes", placeholder="Leave blank for OCR", key=f"screenshot_likes_override_{upload_signature}")
             with override_cols[2]:
-                comments_override = st.text_input("Comments", placeholder="0", key="screenshot_comments_override")
+                comments_override = st.text_input("Comments", placeholder="Leave blank for OCR", key=f"screenshot_comments_override_{upload_signature}")
             with override_cols[3]:
-                shares_override = st.text_input("Shares", placeholder="75", key="screenshot_shares_override")
+                shares_override = st.text_input("Shares", placeholder="Leave blank for OCR", key=f"screenshot_shares_override_{upload_signature}")
 
         analyze_now = st.button("Analyze Uploaded Screenshot", type="primary", key="analyze_screenshot_button")
         if not analyze_now:

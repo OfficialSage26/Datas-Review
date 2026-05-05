@@ -22,6 +22,7 @@ METRIC_ALIASES = {
     "payout": ["payout", "reward", "earnings"],
     "status": ["status", "decision"],
 }
+ALL_METRIC_TERMS = sorted({alias for aliases in METRIC_ALIASES.values() for alias in aliases}, key=len, reverse=True)
 
 PLATFORM_KEYWORDS = {
     "TikTok": ["tiktok", "tik tok"],
@@ -43,7 +44,7 @@ def _number(value: str) -> int | float | str:
         multiplier = 1_000_000_000
         cleaned = cleaned[:-1]
     cleaned = cleaned.strip()
-    if multiplier == 1 and re.fullmatch(r"\d+\.\d{3}", cleaned):
+    if multiplier == 1 and re.fullmatch(r"\d{1,3}(?:\.\d{3})+", cleaned):
         cleaned = cleaned.replace(".", "")
     try:
         number = float(cleaned) * multiplier
@@ -63,13 +64,26 @@ def _metric_regex(alias: str) -> list[str]:
 
 def _extract_metric(text: str, aliases: list[str]) -> int | float | str | None:
     normalized = re.sub(r"\s+", " ", text)
+    number = r"(\$?\d+(?:[,.]\d+)*(?:\.\d+)?\s*[kKmMbB]?)"
     for alias in aliases:
-        for pattern in _metric_regex(alias):
-            match = re.search(pattern, normalized, flags=re.IGNORECASE)
-            if match:
-                value = match.group(1)
-                if re.search(r"\d", value):
-                    return _number(value)
+        escaped = re.escape(alias)
+        for match in re.finditer(rf"\b{escaped}\b(?P<gap>[^0-9]{{0,40}}){number}", normalized, flags=re.IGNORECASE):
+            gap = match.group("gap").lower()
+            if any(term in gap for term in ALL_METRIC_TERMS if term not in aliases):
+                continue
+            value = match.group(2)
+            if re.search(r"\d", value):
+                return _number(value)
+
+    for alias in aliases:
+        escaped = re.escape(alias)
+        for match in re.finditer(rf"{number}\s+\b{escaped}\b", normalized, flags=re.IGNORECASE):
+            prefix = normalized[max(0, match.start() - 24) : match.start()].lower().strip(" :#-\t")
+            if any(prefix.endswith(term) for term in ALL_METRIC_TERMS):
+                continue
+            value = match.group(1)
+            if re.search(r"\d", value):
+                return _number(value)
     return None
 
 
@@ -78,16 +92,39 @@ def _extract_metric_from_lines(lines: list[str], aliases: list[str]) -> int | fl
         lowered = line.lower()
         if not any(alias in lowered for alias in aliases):
             continue
+        metric_count = sum(1 for term in ALL_METRIC_TERMS if term in lowered)
+        if metric_count > 1:
+            continue
         tail = re.sub("|".join(re.escape(alias) for alias in aliases), "", line, flags=re.IGNORECASE).strip(" :#-\t")
         if re.search(r"\d", tail):
             match = re.search(r"\$?\d+(?:[,.]\d+)*(?:\.\d+)?\s*[kKmMbB]?", tail)
             if match:
                 return _number(match.group(0))
         for next_line in lines[index + 1 : index + 4]:
+            if len(_numbers_from_text(next_line)) > 1:
+                continue
             match = re.search(r"\$?\d+(?:[,.]\d+)*(?:\.\d+)?\s*[kKmMbB]?", next_line)
             if match:
                 return _number(match.group(0))
     return None
+
+
+def _extract_metric_table_from_lines(lines: list[str]) -> dict[str, Any]:
+    fields: dict[str, Any] = {}
+    labels = ["views", "likes", "comments", "shares"]
+    for index, line in enumerate(lines):
+        lowered = line.lower()
+        if not all(label in lowered for label in labels):
+            continue
+        number_values: list[int | float | str] = []
+        for next_line in lines[index + 1 : index + 4]:
+            number_values.extend(_numbers_from_text(next_line))
+            if len(number_values) >= 4:
+                break
+        for label, value in zip(labels, number_values[:4]):
+            fields[label] = value
+        break
+    return fields
 
 
 def _extract_status(text: str) -> str | None:
@@ -112,11 +149,11 @@ def _extract_platform(text: str) -> str | None:
 def extract_visible_metrics(text: str) -> dict[str, Any]:
     """Extract visible metric fields from OCR text."""
     lines = [line.strip() for line in text.splitlines() if line.strip()]
-    fields: dict[str, Any] = {}
+    fields: dict[str, Any] = _extract_metric_table_from_lines(lines)
     for field, aliases in METRIC_ALIASES.items():
         if field == "status":
             fields[field] = _extract_status(text)
-        else:
+        elif fields.get(field) is None:
             fields[field] = _extract_metric(text, aliases)
             if fields[field] is None:
                 fields[field] = _extract_metric_from_lines(lines, aliases)
@@ -148,6 +185,232 @@ def _ocr_image(image_path: Path, timeout_seconds: int = 6, max_dimension: int = 
     except Exception as exc:
         result["error"] = f"OCR failed or is not configured: {exc}"
     return result
+
+
+def _ocr_array_text(image: Any, config: str = "", timeout_seconds: int = 4) -> str:
+    from PIL import Image
+    import pytesseract
+
+    configured_cmd = _find_tesseract_command()
+    if configured_cmd:
+        pytesseract.pytesseract.tesseract_cmd = configured_cmd
+    return pytesseract.image_to_string(Image.fromarray(image), config=config, timeout=timeout_seconds)
+
+
+def _ocr_array_data(image: Any, config: str = "", timeout_seconds: int = 4) -> dict[str, Any]:
+    from PIL import Image
+    import pytesseract
+
+    configured_cmd = _find_tesseract_command()
+    if configured_cmd:
+        pytesseract.pytesseract.tesseract_cmd = configured_cmd
+    return pytesseract.image_to_data(
+        Image.fromarray(image),
+        config=config,
+        output_type=pytesseract.Output.DICT,
+        timeout=timeout_seconds,
+    )
+
+
+def _preprocess_metric_crop(crop: Any) -> Any:
+    import cv2
+    import numpy as np
+
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    gray = cv2.resize(gray, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
+    gray = cv2.GaussianBlur(gray, (3, 3), 0)
+    gray = cv2.equalizeHist(gray)
+    # White text on dark dashboard backgrounds works best after inversion.
+    inverted = cv2.bitwise_not(gray)
+    thresholded = cv2.adaptiveThreshold(
+        inverted,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        31,
+        7,
+    )
+    kernel = np.ones((2, 2), dtype=np.uint8)
+    return cv2.morphologyEx(thresholded, cv2.MORPH_CLOSE, kernel)
+
+
+def _numbers_from_text(text: str) -> list[int | float | str]:
+    values: list[int | float | str] = []
+    for match in re.finditer(r"\d+(?:[,.]\d+)*(?:\.\d+)?\s*[kKmMbB]?", text):
+        parsed = _number(match.group(0))
+        if isinstance(parsed, (int, float)):
+            values.append(parsed)
+    return values
+
+
+def _metric_row_bounds(image: Any) -> tuple[int, int, int, int] | None:
+    """Find the Whop-style metric row immediately above the analytics graph."""
+    import cv2
+    import numpy as np
+
+    height, width = image.shape[:2]
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    # Saturated pink/cyan/orange graph header lines mark the top of the graph.
+    saturated = cv2.inRange(hsv[:, :, 1], 70, 255)
+    bright_enough = cv2.inRange(hsv[:, :, 2], 80, 255)
+    mask = cv2.bitwise_and(saturated, bright_enough)
+    search_top = int(height * 0.32)
+    search_bottom = int(height * 0.72)
+    row_scores = np.count_nonzero(mask[search_top:search_bottom, :], axis=1)
+    if len(row_scores) == 0:
+        return None
+    graph_top = int(search_top + int(np.argmax(row_scores)))
+    if row_scores[graph_top - search_top] < max(width * 0.08, 40):
+        return None
+
+    y0 = max(0, graph_top - int(height * 0.13))
+    y1 = min(height, graph_top + int(height * 0.015))
+    x0 = int(width * 0.03)
+    x1 = int(width * 0.97)
+    if y1 <= y0 or x1 <= x0:
+        return None
+    return x0, y0, x1, y1
+
+
+def _extract_whop_metric_row(image_path: Path) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "fields": {},
+        "field_sources": {},
+        "ocr_text": {},
+        "bounds": None,
+        "error": None,
+    }
+    try:
+        import cv2
+
+        image = cv2.imread(str(image_path))
+        if image is None:
+            result["error"] = "OpenCV could not read the image file for metric OCR."
+            return result
+        bounds = _metric_row_bounds(image)
+        if not bounds:
+            result["error"] = "Whop metric row was not found."
+            return result
+        result["bounds"] = bounds
+        x0, y0, x1, y1 = bounds
+        row = image[y0:y1, x0:x1]
+        labels = ["views", "likes", "comments", "shares"]
+        processed_row = _preprocess_metric_crop(row)
+        table_text = _ocr_array_text(
+            processed_row,
+            config="--psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789,. ",
+        )
+        result["ocr_text"]["table"] = table_text
+        for key, value in _extract_metric_table_from_lines([line.strip() for line in table_text.splitlines() if line.strip()]).items():
+            result["fields"][key] = value
+            result["field_sources"][key] = "whop_metric_row_table_ocr"
+
+        try:
+            data = _ocr_array_data(
+                processed_row,
+                config="--psm 6 -c tessedit_char_whitelist=0123456789,.",
+            )
+            processed_width = processed_row.shape[1]
+            slot_width_processed = processed_width / 4
+            for text, left, width_box, confidence in zip(
+                data.get("text", []),
+                data.get("left", []),
+                data.get("width", []),
+                data.get("conf", []),
+            ):
+                if not str(text).strip() or not re.search(r"\d", str(text)):
+                    continue
+                try:
+                    if float(confidence) < 25:
+                        continue
+                except (TypeError, ValueError):
+                    pass
+                values = _numbers_from_text(str(text))
+                if not values:
+                    continue
+                slot_index = int(min(3, max(0, (float(left) + float(width_box) / 2) // slot_width_processed)))
+                label = labels[slot_index]
+                value = max(values, key=lambda item: float(item))
+                if value is not None:
+                    result["fields"][label] = value
+                    result["field_sources"][label] = "whop_metric_row_position_ocr"
+        except Exception as exc:
+            result["ocr_text"]["position_error"] = str(exc)
+
+        slot_width = row.shape[1] / 4
+        for index, label in enumerate(labels):
+            if label in result["fields"]:
+                continue
+            left = max(0, int(index * slot_width - slot_width * 0.04))
+            right = min(row.shape[1], int((index + 1) * slot_width + slot_width * 0.04))
+            slot = row[:, left:right]
+            processed = _preprocess_metric_crop(slot)
+            text = _ocr_array_text(
+                processed,
+                config="--psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789,. ",
+            )
+            result["ocr_text"][label] = text
+            numbers = _numbers_from_text(text)
+            if numbers:
+                # Use the largest number in the slot; it is the metric value, not the label.
+                value = max(numbers, key=lambda item: float(item))
+                result["fields"][label] = value
+                result["field_sources"][label] = "whop_metric_row_ocr"
+    except Exception as exc:
+        result["error"] = f"Whop metric-row OCR failed: {exc}"
+    return result
+
+
+def _metric_field_score(fields: dict[str, Any]) -> float:
+    values = {key: fields.get(key) for key in ("views", "likes", "comments", "shares")}
+    numeric = {key: value for key, value in values.items() if isinstance(value, (int, float))}
+    score = float(len(numeric) * 10)
+    views = float(numeric.get("views") or 0)
+    if views <= 0:
+        return score
+    for key in ("likes", "comments", "shares"):
+        value = float(numeric.get(key) or 0)
+        if value > views:
+            score -= 25
+    likes = float(numeric.get("likes") or 0)
+    comments = float(numeric.get("comments") or 0)
+    shares = float(numeric.get("shares") or 0)
+    if likes and likes / views <= 0.40:
+        score += 8
+    elif likes:
+        score -= 12
+    if comments and comments / views <= 0.10:
+        score += 6
+    elif comments:
+        score -= 10
+    if shares and shares / views <= 0.25:
+        score += 6
+    elif shares:
+        score -= 10
+    if likes >= comments:
+        score += 4
+    if views >= likes:
+        score += 4
+    return score
+
+
+def _merge_metric_row_fields(result: dict[str, Any], metric_row: dict[str, Any]) -> None:
+    row_fields = metric_row.get("fields", {})
+    if not row_fields:
+        return
+    required = ("views", "likes", "comments", "shares")
+    row_has_all = all(row_fields.get(key) is not None for key in required)
+    current_has_all = all(result["fields"].get(key) is not None for key in required)
+    if row_has_all and (not current_has_all or _metric_field_score(row_fields) > _metric_field_score(result["fields"]) + 4):
+        for key in required:
+            result["fields"][key] = row_fields[key]
+            result["field_sources"][key] = metric_row.get("field_sources", {}).get(key, "whop_metric_row_ocr")
+        return
+
+    for key, value in row_fields.items():
+        if value is not None and result["fields"].get(key) is None:
+            result["fields"][key] = value
+            result["field_sources"][key] = metric_row.get("field_sources", {}).get(key, "whop_metric_row_ocr")
 
 
 def _find_tesseract_command() -> str | None:
@@ -374,8 +637,10 @@ def analyze_screenshot(path: str | Path) -> dict[str, Any]:
             "status": None,
             "platform": None,
         },
+        "field_sources": {},
         "graph_shape": "unknown",
         "graph_vision": {},
+        "metric_row_ocr": {},
         "missing_fields": ["views", "likes", "comments", "shares", "saves", "payout", "status", "platform"],
         "error": None,
     }
@@ -390,6 +655,13 @@ def analyze_screenshot(path: str | Path) -> dict[str, Any]:
         result["error"] = ocr["error"]
     if result["text"]:
         result["fields"] = extract_visible_metrics(result["text"])
+        result["field_sources"].update({key: "full_image_ocr" for key, value in result["fields"].items() if value is not None})
+
+    metric_row = _extract_whop_metric_row(image_path)
+    result["metric_row_ocr"] = metric_row
+    _merge_metric_row_fields(result, metric_row)
+    if metric_row.get("error") and not result["error"] and not metric_row.get("fields"):
+        result["error"] = metric_row["error"]
 
     graph = _detect_graph_with_cv(image_path)
     result["cv_available"] = bool(graph["cv_available"])
