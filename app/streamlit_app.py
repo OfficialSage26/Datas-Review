@@ -15,7 +15,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.predict import predict_one, predict_submissions
-from src.moderation import format_moderation_output
+from src.moderation import REJECT_FULL_ANALYTICS
 from src.screenshot_analyzer import analyze_dashboard_screenshot
 from src.train_model import METRICS_PATH
 
@@ -24,6 +24,8 @@ st.set_page_config(page_title="AI Video Fraud Review", layout="wide")
 st.title("AI Video Fraud Review")
 
 tab_screenshot, tab_manual, tab_batch, tab_model = st.tabs(["Screenshot Review", "Manual Review", "CSV Batch", "Model"])
+
+MAX_SCREENSHOT_UPLOAD_BYTES = 15 * 1024 * 1024
 
 
 def show_moderation_result(result: dict) -> None:
@@ -45,6 +47,28 @@ def show_moderation_result(result: dict) -> None:
     st.info(moderation.get("mod_note", result.get("creator_facing_reason", "")))
 
 
+def safe_json(value: object) -> object:
+    """Convert model output containing numpy/pandas values into Streamlit-safe JSON."""
+    return json.loads(json.dumps(value, default=str))
+
+
+def show_fail_closed_upload_error(error: Exception) -> None:
+    """Keep the reviewer workflow visible when screenshot analysis fails."""
+    show_moderation_result(
+        {
+            "moderation": {
+                "decision": REJECT_FULL_ANALYTICS,
+                "confidence": "Low",
+                "reason": ["Screenshot analysis did not complete, so the submission cannot be approved from visible proof."],
+                "red_flags": ["Uploaded screenshot could not be fully analyzed."],
+                "mod_note": "Please send full analytics before this submission can be approved.",
+            }
+        }
+    )
+    with st.expander("Technical upload error"):
+        st.exception(error)
+
+
 with tab_screenshot:
     st.subheader("Upload Submission Screenshot")
     platform_from_reviewer = st.selectbox(
@@ -63,55 +87,74 @@ with tab_screenshot:
         key="screenshot_upload",
     )
     if uploaded_image is not None:
-        st.image(uploaded_image, caption="Uploaded screenshot", use_container_width=True)
-        suffix = Path(uploaded_image.name).suffix or ".png"
-        temp_path = None
-        try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
-                temp_file.write(uploaded_image.getbuffer())
-                temp_path = Path(temp_file.name)
-            analysis_result = analyze_dashboard_screenshot(
-                temp_path,
-                platform=None if platform_from_reviewer == "Unknown" else platform_from_reviewer,
-                extra_fields={"campaign_requirements": campaign_requirements.strip()} if campaign_requirements.strip() else None,
-            )
-        finally:
-            if temp_path and temp_path.exists():
-                temp_path.unlink(missing_ok=True)
+        image_bytes = uploaded_image.getvalue()
+        st.image(image_bytes, caption="Uploaded screenshot", use_container_width=True)
 
-        show_moderation_result(analysis_result["prediction"] | {"moderation": analysis_result["moderation"]})
+        if len(image_bytes) > MAX_SCREENSHOT_UPLOAD_BYTES:
+            st.warning("This screenshot is large and may take longer to analyze. Crop to the visible submission card if the review is slow.")
 
-        analysis = analysis_result["screenshot_analysis"]
-        fields = analysis.get("fields", {})
-        graph_vision = analysis.get("graph_vision", {})
-        st.markdown("**Extracted Screenshot Fields:**")
-        st.dataframe(
-            pd.DataFrame(
-                [
-                    {"field": "platform", "value": fields.get("platform") or analysis_result["submission"].get("platform")},
-                    {"field": "views", "value": fields.get("views")},
-                    {"field": "likes", "value": fields.get("likes")},
-                    {"field": "comments", "value": fields.get("comments")},
-                    {"field": "shares", "value": fields.get("shares")},
-                    {"field": "status", "value": fields.get("status")},
-                    {"field": "graph_pattern", "value": analysis.get("graph_shape")},
-                    {"field": "ocr_available", "value": analysis.get("ocr_available")},
-                    {"field": "cv_available", "value": analysis.get("cv_available")},
-                    {"field": "graph_confidence", "value": graph_vision.get("confidence")},
-                    {"field": "visible_action", "value": graph_vision.get("action_visible")},
-                ]
-            ),
-            use_container_width=True,
-        )
-        with st.expander("Internal model details"):
-            prediction = analysis_result["prediction"]
-            st.write("Risk score:", prediction["risk_score"])
-            st.write("Risk level:", prediction["risk_level"])
-            st.write("Predicted class:", prediction["predicted_class"])
-            st.write("Graph analysis:", prediction["review"]["graph_analysis"])
-            st.write("Suspicious signals:", prediction["review"]["suspicious_signals"])
-            st.write("Missing evidence:", prediction["review"]["missing_evidence_needed"])
-            st.json(analysis_result)
+        analyze_now = st.button("Analyze Uploaded Screenshot", type="primary", key="analyze_screenshot_button")
+        if not analyze_now:
+            st.info("Preview loaded. Click Analyze Uploaded Screenshot to run OCR, graph vision, and fraud review.")
+        else:
+            suffix = Path(uploaded_image.name).suffix.lower()
+            if suffix not in {".png", ".jpg", ".jpeg"}:
+                suffix = ".png"
+            temp_path = None
+            try:
+                with st.spinner("Analyzing screenshot with OCR, graph vision, and the fraud model..."):
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+                        temp_file.write(image_bytes)
+                        temp_path = Path(temp_file.name)
+                    analysis_result = analyze_dashboard_screenshot(
+                        temp_path,
+                        platform=None if platform_from_reviewer == "Unknown" else platform_from_reviewer,
+                        extra_fields={"campaign_requirements": campaign_requirements.strip()} if campaign_requirements.strip() else None,
+                    )
+            except Exception as exc:
+                show_fail_closed_upload_error(exc)
+                analysis_result = None
+            finally:
+                if temp_path and temp_path.exists():
+                    temp_path.unlink(missing_ok=True)
+
+            if analysis_result:
+                display_result = dict(analysis_result.get("prediction") or {})
+                display_result["moderation"] = analysis_result.get("moderation") or {}
+                show_moderation_result(display_result)
+
+                analysis = analysis_result["screenshot_analysis"]
+                fields = analysis.get("fields", {})
+                graph_vision = analysis.get("graph_vision", {})
+                st.markdown("**Extracted Screenshot Fields:**")
+                st.dataframe(
+                    pd.DataFrame(
+                        [
+                            {"field": "platform", "value": fields.get("platform") or analysis_result["submission"].get("platform")},
+                            {"field": "views", "value": fields.get("views")},
+                            {"field": "likes", "value": fields.get("likes")},
+                            {"field": "comments", "value": fields.get("comments")},
+                            {"field": "shares", "value": fields.get("shares")},
+                            {"field": "status", "value": fields.get("status")},
+                            {"field": "graph_pattern", "value": analysis.get("graph_shape")},
+                            {"field": "ocr_available", "value": analysis.get("ocr_available")},
+                            {"field": "cv_available", "value": analysis.get("cv_available")},
+                            {"field": "graph_confidence", "value": graph_vision.get("confidence")},
+                            {"field": "visible_action", "value": graph_vision.get("action_visible")},
+                        ]
+                    ),
+                    use_container_width=True,
+                )
+                with st.expander("Internal model details"):
+                    prediction = analysis_result["prediction"]
+                    st.write("Risk score:", prediction["risk_score"])
+                    st.write("Risk level:", prediction["risk_level"])
+                    st.write("Predicted class:", prediction["predicted_class"])
+                    st.write("Graph analysis:", prediction["review"]["graph_analysis"])
+                    st.write("Suspicious signals:", prediction["review"]["suspicious_signals"])
+                    st.write("Missing evidence:", prediction["review"]["missing_evidence_needed"])
+                    if st.checkbox("Show raw screenshot analysis JSON"):
+                        st.json(safe_json(analysis_result))
 
 with tab_manual:
     col_left, col_right = st.columns(2)

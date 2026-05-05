@@ -122,7 +122,7 @@ def extract_visible_metrics(text: str) -> dict[str, Any]:
     return fields
 
 
-def _ocr_image(image_path: Path) -> dict[str, Any]:
+def _ocr_image(image_path: Path, timeout_seconds: int = 6, max_dimension: int = 1600) -> dict[str, Any]:
     result = {
         "ocr_available": False,
         "text": "",
@@ -133,10 +133,12 @@ def _ocr_image(image_path: Path) -> dict[str, Any]:
         import pytesseract
 
         image = Image.open(image_path)
+        image = ImageOps.exif_transpose(image)
+        image.thumbnail((max_dimension, max_dimension))
         image = ImageOps.grayscale(image)
         image = ImageOps.autocontrast(image)
         result["ocr_available"] = True
-        result["text"] = pytesseract.image_to_string(image)
+        result["text"] = pytesseract.image_to_string(image, timeout=timeout_seconds)
     except Exception as exc:
         result["error"] = f"OCR failed or is not configured: {exc}"
     return result
@@ -239,6 +241,11 @@ def _detect_graph_with_cv(image_path: Path) -> dict[str, Any]:
             return result
         result["cv_available"] = True
         height, width = image.shape[:2]
+        max_dimension = 1800
+        if max(height, width) > max_dimension:
+            scale = max_dimension / max(height, width)
+            image = cv2.resize(image, (int(width * scale), int(height * scale)), interpolation=cv2.INTER_AREA)
+            height, width = image.shape[:2]
 
         # Most dashboard graphs sit below metric cards, so scan the lower/middle region.
         y0 = int(height * 0.22)
