@@ -137,8 +137,8 @@ def _ocr_image(image_path: Path, timeout_seconds: int = 6, max_dimension: int = 
         image.thumbnail((max_dimension, max_dimension))
         image = ImageOps.grayscale(image)
         image = ImageOps.autocontrast(image)
-        result["ocr_available"] = True
         result["text"] = pytesseract.image_to_string(image, timeout=timeout_seconds)
+        result["ocr_available"] = True
     except Exception as exc:
         result["error"] = f"OCR failed or is not configured: {exc}"
     return result

@@ -126,6 +126,8 @@ with tab_screenshot:
                 analysis = analysis_result["screenshot_analysis"]
                 fields = analysis.get("fields", {})
                 graph_vision = analysis.get("graph_vision", {})
+                if analysis.get("error"):
+                    st.warning(analysis["error"])
                 st.markdown("**Extracted Screenshot Fields:**")
                 st.dataframe(
                     pd.DataFrame(
