@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+from io import BytesIO
+from pathlib import Path
+
 import pandas as pd
+from PIL import Image
+from streamlit.testing.v1 import AppTest
 
 from src.feature_engineering import build_feature_frame, create_graph_features
 from src.moderation import moderation_decision_from_prediction
 from src.predict import predict_one
 from src.risk_scoring import calculate_risk_score, risk_level
 from src.screenshot_analyzer import extract_visible_metrics, extracted_metrics_to_submission
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_ratio_and_graph_features_with_missing_optional_fields() -> None:
@@ -196,3 +204,19 @@ def test_screenshot_analysis_converts_fields_to_submission() -> None:
     assert submission["platform"] == "TikTok"
     assert submission["views"] == 102146
     assert submission["graph_pattern"] == "flatline_then_vertical_spike"
+
+
+def test_root_streamlit_app_rerenders_after_screenshot_upload() -> None:
+    image = Image.new("RGB", (320, 180), "#222222")
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+
+    app = AppTest.from_file(str(ROOT / "streamlit_app.py"), default_timeout=30)
+    app.run()
+    app.file_uploader(key="screenshot_upload").upload("sample.png", buffer.getvalue(), "image/png")
+    app.run(timeout=30)
+
+    assert not app.exception
+    assert any(title.value == "AI Video Fraud Review" for title in app.title)
+    assert any(success.value == "File ready: sample.png" for success in app.success)
+    assert any(button.label == "Analyze Uploaded Screenshot" for button in app.button)

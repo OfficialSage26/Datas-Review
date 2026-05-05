@@ -69,6 +69,11 @@ def show_fail_closed_upload_error(error: Exception) -> None:
         st.exception(error)
 
 
+def display_value(value: object) -> str:
+    """Normalize mixed extracted values for Streamlit's dataframe renderer."""
+    return "" if value is None else str(value)
+
+
 with tab_screenshot:
     st.subheader("Upload Submission Screenshot")
     platform_from_reviewer = st.selectbox(
@@ -87,15 +92,16 @@ with tab_screenshot:
         key="screenshot_upload",
     )
     if uploaded_image is not None:
-        image_bytes = uploaded_image.getvalue()
-        st.image(image_bytes, caption="Uploaded screenshot", use_container_width=True)
-
-        if len(image_bytes) > MAX_SCREENSHOT_UPLOAD_BYTES:
+        st.success(f"File ready: {uploaded_image.name}")
+        upload_size = getattr(uploaded_image, "size", None)
+        if upload_size:
+            st.caption(f"Upload size: {upload_size / 1024:.1f} KB")
+        if upload_size and upload_size > MAX_SCREENSHOT_UPLOAD_BYTES:
             st.warning("This screenshot is large and may take longer to analyze. Crop to the visible submission card if the review is slow.")
 
         analyze_now = st.button("Analyze Uploaded Screenshot", type="primary", key="analyze_screenshot_button")
         if not analyze_now:
-            st.info("Preview loaded. Click Analyze Uploaded Screenshot to run OCR, graph vision, and fraud review.")
+            st.info("Click Analyze Uploaded Screenshot to run OCR, graph vision, and fraud review.")
         else:
             suffix = Path(uploaded_image.name).suffix.lower()
             if suffix not in {".png", ".jpg", ".jpeg"}:
@@ -103,6 +109,7 @@ with tab_screenshot:
             temp_path = None
             try:
                 with st.spinner("Analyzing screenshot with OCR, graph vision, and the fraud model..."):
+                    image_bytes = uploaded_image.getvalue()
                     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
                         temp_file.write(image_bytes)
                         temp_path = Path(temp_file.name)
@@ -132,20 +139,20 @@ with tab_screenshot:
                 st.dataframe(
                     pd.DataFrame(
                         [
-                            {"field": "platform", "value": fields.get("platform") or analysis_result["submission"].get("platform")},
-                            {"field": "views", "value": fields.get("views")},
-                            {"field": "likes", "value": fields.get("likes")},
-                            {"field": "comments", "value": fields.get("comments")},
-                            {"field": "shares", "value": fields.get("shares")},
-                            {"field": "status", "value": fields.get("status")},
-                            {"field": "graph_pattern", "value": analysis.get("graph_shape")},
-                            {"field": "ocr_available", "value": analysis.get("ocr_available")},
-                            {"field": "cv_available", "value": analysis.get("cv_available")},
-                            {"field": "graph_confidence", "value": graph_vision.get("confidence")},
-                            {"field": "visible_action", "value": graph_vision.get("action_visible")},
+                            {"field": "platform", "value": display_value(fields.get("platform") or analysis_result["submission"].get("platform"))},
+                            {"field": "views", "value": display_value(fields.get("views"))},
+                            {"field": "likes", "value": display_value(fields.get("likes"))},
+                            {"field": "comments", "value": display_value(fields.get("comments"))},
+                            {"field": "shares", "value": display_value(fields.get("shares"))},
+                            {"field": "status", "value": display_value(fields.get("status"))},
+                            {"field": "graph_pattern", "value": display_value(analysis.get("graph_shape"))},
+                            {"field": "ocr_available", "value": display_value(analysis.get("ocr_available"))},
+                            {"field": "cv_available", "value": display_value(analysis.get("cv_available"))},
+                            {"field": "graph_confidence", "value": display_value(graph_vision.get("confidence"))},
+                            {"field": "visible_action", "value": display_value(graph_vision.get("action_visible"))},
                         ]
                     ),
-                    use_container_width=True,
+                    width="stretch",
                 )
                 with st.expander("Internal model details"):
                     prediction = analysis_result["prediction"]
