@@ -1,0 +1,249 @@
+{
+  "rows": 10300,
+  "original_plus_generated": true,
+  "synthetic_training_note": "Generated rows supplement training only and are not production validation evidence.",
+  "guide_rule_count": 13,
+  "accuracy": 0.9982,
+  "classification_report": "              precision    recall  f1-score   support\n\n      botted       1.00      1.00      1.00       755\n       clean       1.00      1.00      1.00       756\n  suspicious       1.00      1.00      1.00       755\n\n    accuracy                           1.00      2266\n   macro avg       1.00      1.00      1.00      2266\nweighted avg       1.00      1.00      1.00      2266\n",
+  "confusion_matrix": [
+    [
+      756,
+      0,
+      0
+    ],
+    [
+      0,
+      752,
+      3
+    ],
+    [
+      0,
+      1,
+      754
+    ]
+  ],
+  "labels": [
+    "clean",
+    "suspicious",
+    "botted"
+  ],
+  "per_class": {
+    "clean": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "support": 756
+    },
+    "suspicious": {
+      "precision": 0.9987,
+      "recall": 0.996,
+      "f1": 0.9973,
+      "support": 755
+    },
+    "botted": {
+      "precision": 0.996,
+      "recall": 0.9987,
+      "f1": 0.9974,
+      "support": 755
+    }
+  },
+  "rule_based_baseline": {
+    "accuracy": 0.7264,
+    "per_class": {
+      "clean": {
+        "precision": 0.9984,
+        "recall": 0.8373,
+        "f1": 0.9108
+      },
+      "suspicious": {
+        "precision": 0.6675,
+        "recall": 0.3563,
+        "f1": 0.4646
+      },
+      "botted": {
+        "precision": 0.6054,
+        "recall": 0.9854,
+        "f1": 0.75
+      }
+    },
+    "confusion_matrix": [
+      [
+        633,
+        123,
+        0
+      ],
+      [
+        1,
+        269,
+        485
+      ],
+      [
+        0,
+        11,
+        744
+      ]
+    ]
+  },
+  "feature_importance": [
+    {
+      "feature": "comment_rate",
+      "importance": 0.130992
+    },
+    {
+      "feature": "total_engagement_rate",
+      "importance": 0.094239
+    },
+    {
+      "feature": "engagement_rate",
+      "importance": 0.090087
+    },
+    {
+      "feature": "views_to_avg_multiplier",
+      "importance": 0.079798
+    },
+    {
+      "feature": "like_rate",
+      "importance": 0.072705
+    },
+    {
+      "feature": "flatline_hours_before_jump",
+      "importance": 0.049421
+    },
+    {
+      "feature": "suspicious_comment_pct",
+      "importance": 0.046053
+    },
+    {
+      "feature": "graph_suspicion_score",
+      "importance": 0.044659
+    },
+    {
+      "feature": "completion_rate",
+      "importance": 0.044235
+    },
+    {
+      "feature": "suspicious_ratio_score",
+      "importance": 0.033764
+    },
+    {
+      "feature": "high_views_low_comments",
+      "importance": 0.028653
+    },
+    {
+      "feature": "max_view_jump_pct",
+      "importance": 0.028157
+    },
+    {
+      "feature": "share_rate",
+      "importance": 0.023767
+    },
+    {
+      "feature": "bot_like_profile_pct",
+      "importance": 0.02321
+    },
+    {
+      "feature": "repeated_comment_pct",
+      "importance": 0.021615
+    },
+    {
+      "feature": "spike_engagement_rate",
+      "importance": 0.013008
+    },
+    {
+      "feature": "profile_traffic_pct",
+      "importance": 0.009612
+    },
+    {
+      "feature": "high_views_low_likes",
+      "importance": 0.009336
+    },
+    {
+      "feature": "no_matching_engagement_flag",
+      "importance": 0.008603
+    },
+    {
+      "feature": "flatline_then_spike_score",
+      "importance": 0.008522
+    },
+    {
+      "feature": "fyp_reels_explore_pct",
+      "importance": 0.008459
+    },
+    {
+      "feature": "retention_pattern_flat_or_odd",
+      "importance": 0.008421
+    },
+    {
+      "feature": "comment_quality_mixed",
+      "importance": 0.007748
+    },
+    {
+      "feature": "retention_pattern_sudden_drop",
+      "importance": 0.006832
+    },
+    {
+      "feature": "graph_pattern_smooth_gradual",
+      "importance": 0.005809
+    },
+    {
+      "feature": "comments",
+      "importance": 0.005166
+    },
+    {
+      "feature": "late_like_spike_strength",
+      "importance": 0.004939
+    },
+    {
+      "feature": "max_view_jump",
+      "importance": 0.00476
+    },
+    {
+      "feature": "graph_pattern_vertical_spike_no_engagement",
+      "importance": 0.004758
+    },
+    {
+      "feature": "retention_pattern_gradual_drop",
+      "importance": 0.004629
+    },
+    {
+      "feature": "max_view_jump_zscore",
+      "importance": 0.004259
+    },
+    {
+      "feature": "growth_volatility",
+      "importance": 0.004221
+    },
+    {
+      "feature": "avg_watch_time_sec",
+      "importance": 0.004022
+    },
+    {
+      "feature": "view_jump_ratio",
+      "importance": 0.004005
+    },
+    {
+      "feature": "reach_view_ratio",
+      "importance": 0.003956
+    },
+    {
+      "feature": "top_two_view_jump_share",
+      "importance": 0.003791
+    },
+    {
+      "feature": "high_views_zero_comments",
+      "importance": 0.003711
+    },
+    {
+      "feature": "comment_quality_short_but_relevant",
+      "importance": 0.003216
+    },
+    {
+      "feature": "robust_spike_ratio",
+      "importance": 0.002874
+    },
+    {
+      "feature": "graph_pattern_low_engagement_smooth",
+      "importance": 0.002804
+    }
+  ]
+}
