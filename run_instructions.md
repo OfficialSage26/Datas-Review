@@ -66,10 +66,18 @@ http://127.0.0.1:8000/docs
 ## 7. Start the Streamlit dashboard
 
 ```powershell
-streamlit run app/streamlit_app.py
+streamlit run streamlit_app.py
 ```
 
 Streamlit will print the local dashboard URL.
+
+For Streamlit Community Cloud, use:
+
+```text
+Repository: OfficialSage26/Datas-Review
+Branch: main
+Main file path: streamlit_app.py
+```
 
 ## 8. Analyze a dashboard screenshot
 

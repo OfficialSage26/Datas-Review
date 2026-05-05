@@ -33,6 +33,7 @@ src/
   utils.py
 app/
   streamlit_app.py
+streamlit_app.py
 tests/
   test_prediction.py
 ```
@@ -100,10 +101,18 @@ Example request:
 ## Run The Dashboard
 
 ```powershell
-streamlit run app/streamlit_app.py
+streamlit run streamlit_app.py
 ```
 
 The dashboard supports manual metric entry, CSV upload, batch predictions, risk scores, graph analysis, suspicious signals, creator-facing reasons, and feature importance.
+
+For Streamlit Community Cloud, use:
+
+```text
+Repository: OfficialSage26/Datas-Review
+Branch: main
+Main file path: streamlit_app.py
+```
 
 ## Analyze A Dashboard Screenshot
 

@@ -1,0 +1,6 @@
+[client]
+toolbarMode = "developer"
+
+[server]
+headless = true
+
