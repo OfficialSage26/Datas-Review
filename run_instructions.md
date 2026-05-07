@@ -41,7 +41,7 @@ models/training_metrics.json
 ## 4. Run tests
 
 ```powershell
-pytest
+python -m pytest
 ```
 
 ## 5. Run one sample prediction
@@ -51,6 +51,12 @@ python -m src.predict
 ```
 
 ## 6. Start the FastAPI server
+
+Optional for live TikTok URL reviews:
+
+```powershell
+$env:RAPIDAPI_KEY="your_rotated_rapidapi_key"
+```
 
 ```powershell
 uvicorn src.api:app --reload
@@ -65,11 +71,17 @@ http://127.0.0.1:8000/docs
 
 ## 7. Start the Streamlit dashboard
 
+Optional for the `TikTok API Review` tab:
+
+```powershell
+$env:RAPIDAPI_KEY="your_rotated_rapidapi_key"
+```
+
 ```powershell
 streamlit run streamlit_app.py
 ```
 
-Streamlit will print the local dashboard URL. Use the `Screenshot Review` tab to upload a Whop/TikTok analytics screenshot directly.
+Streamlit will print the local dashboard URL. Use the `TikTok API Review` tab to paste a TikTok video URL, or use the `Screenshot Review` tab to upload a Whop/TikTok analytics screenshot directly.
 
 The screenshot review's first result is always one of:
 

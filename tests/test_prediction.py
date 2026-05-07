@@ -247,14 +247,19 @@ def test_screenshot_override_inputs_reset_for_new_upload() -> None:
     app.run()
     app.file_uploader(key="screenshot_upload").upload("first.png", _png_bytes("#222222"), "image/png")
     app.run(timeout=30)
-    app.text_input[0].input("102146")
+    [text_input for text_input in app.text_input if text_input.label == "Views"][0].input("102146")
     app.run(timeout=30)
 
     app.file_uploader(key="screenshot_upload").upload("second.png", _png_bytes("#333333"), "image/png")
     app.run(timeout=30)
 
     assert not app.exception
-    assert [text_input.value for text_input in app.text_input[:4]] == ["", "", "", ""]
+    override_values = [
+        text_input.value
+        for text_input in app.text_input
+        if text_input.label in {"Views", "Likes", "Comments", "Shares"}
+    ]
+    assert override_values == ["", "", "", ""]
 
 
 def test_metric_overrides_replace_missing_ocr_fields() -> None:
@@ -271,3 +276,15 @@ def test_metric_overrides_replace_missing_ocr_fields() -> None:
     assert updated["fields"]["comments"] == 0
     assert "views" not in updated["missing_fields"]
     assert updated["field_sources"]["shares"] == "manual_override"
+
+
+def test_streamlit_tiktok_tab_missing_api_key_does_not_crash(monkeypatch) -> None:
+    monkeypatch.delenv("RAPIDAPI_KEY", raising=False)
+    monkeypatch.delenv("X_RAPIDAPI_KEY", raising=False)
+
+    app = AppTest.from_file(str(ROOT / "streamlit_app.py"), default_timeout=30)
+    app.run()
+
+    assert not app.exception
+    assert any("RAPIDAPI_KEY is not configured" in warning.value for warning in app.warning)
+    assert any(text_input.label == "TikTok video URL" for text_input in app.text_input)

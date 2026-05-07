@@ -80,6 +80,7 @@ Endpoints:
 - `GET /`
 - `POST /predict`
 - `POST /predict-batch`
+- `POST /predict-tiktok-url`
 - `POST /retrain`
 
 Example request:
@@ -104,7 +105,13 @@ Example request:
 streamlit run streamlit_app.py
 ```
 
-The dashboard supports screenshot upload, manual metric entry, CSV upload, batch predictions, risk scores, graph analysis, suspicious signals, creator-facing reasons, and feature importance.
+The dashboard supports TikTok URL review through Tikfly/RapidAPI, screenshot upload, manual metric entry, CSV upload, batch predictions, risk scores, graph analysis, suspicious signals, creator-facing reasons, and feature importance.
+
+For the TikTok API review tab and `/predict-tiktok-url`, configure a rotated RapidAPI key outside source control:
+
+```powershell
+$env:RAPIDAPI_KEY="your_rotated_rapidapi_key"
+```
 
 The screenshot review tab is strict and moderator-facing. Its first output is always one of:
 

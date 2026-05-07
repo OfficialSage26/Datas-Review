@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -17,13 +18,16 @@ if str(ROOT) not in sys.path:
 from src.predict import predict_one, predict_submissions
 from src.moderation import REJECT_FULL_ANALYTICS
 from src.screenshot_analyzer import analyze_dashboard_screenshot
+from src.tikfly_client import TikflyError, fetch_tiktok_review_context
 from src.train_model import METRICS_PATH
 
 
 st.set_page_config(page_title="AI Video Fraud Review", layout="wide")
 st.title("AI Video Fraud Review")
 
-tab_screenshot, tab_manual, tab_batch, tab_model = st.tabs(["Screenshot Review", "Manual Review", "CSV Batch", "Model"])
+tab_tiktok, tab_screenshot, tab_manual, tab_batch, tab_model = st.tabs(
+    ["TikTok API Review", "Screenshot Review", "Manual Review", "CSV Batch", "Model"]
+)
 
 MAX_SCREENSHOT_UPLOAD_BYTES = 15 * 1024 * 1024
 
@@ -50,6 +54,22 @@ def show_moderation_result(result: dict) -> None:
 def safe_json(value: object) -> object:
     """Convert model output containing numpy/pandas values into Streamlit-safe JSON."""
     return json.loads(json.dumps(value, default=str))
+
+
+def rapidapi_key_from_streamlit() -> str:
+    env_key = os.environ.get("RAPIDAPI_KEY", "").strip() or os.environ.get("X_RAPIDAPI_KEY", "").strip()
+    if env_key:
+        return env_key
+    try:
+        direct_key = st.secrets.get("RAPIDAPI_KEY", "")
+        if direct_key:
+            return str(direct_key).strip()
+        rapidapi_section = st.secrets.get("rapidapi", {})
+        if hasattr(rapidapi_section, "get"):
+            return str(rapidapi_section.get("key", "") or "").strip()
+    except Exception:
+        return ""
+    return ""
 
 
 def show_fail_closed_upload_error(error: Exception) -> None:
@@ -82,6 +102,91 @@ def parse_metric_override(label: str, raw_value: str) -> int | None:
         st.error(f"{label} override must be a whole number.")
         st.stop()
     return int(cleaned)
+
+
+with tab_tiktok:
+    st.subheader("Live TikTok Review")
+    rapidapi_key = rapidapi_key_from_streamlit()
+    if not rapidapi_key:
+        st.warning("RAPIDAPI_KEY is not configured. Add it to your environment or Streamlit secrets.")
+
+    tiktok_url = st.text_input(
+        "TikTok video URL",
+        placeholder="https://www.tiktok.com/@creator/video/1234567890123456789",
+        key="tiktok_api_video_url",
+    )
+    history_count = st.number_input(
+        "History count",
+        min_value=1,
+        max_value=35,
+        value=35,
+        step=1,
+        key="tiktok_api_history_count",
+    )
+
+    if st.button("Review TikTok URL", type="primary", disabled=not bool(rapidapi_key), key="review_tiktok_url_button"):
+        if not tiktok_url.strip():
+            st.error("Enter a TikTok video URL first.")
+        else:
+            try:
+                with st.spinner("Fetching TikTok metrics and creator history..."):
+                    tiktok_context = fetch_tiktok_review_context(
+                        tiktok_url.strip(),
+                        api_key=rapidapi_key,
+                        history_count=int(history_count),
+                    )
+                    tiktok_prediction = predict_one(tiktok_context["submission"])
+            except TikflyError as exc:
+                st.error(str(exc))
+            else:
+                display_result = dict(tiktok_prediction)
+                display_result["moderation"] = tiktok_prediction.get("moderation") or {}
+                show_moderation_result(display_result)
+
+                submission = tiktok_context["submission"]
+                history = tiktok_context["history_summary"]
+                for warning in tiktok_context.get("history_warnings", []):
+                    st.warning(str(warning))
+                st.markdown("**Live TikTok Metrics:**")
+                st.dataframe(
+                    pd.DataFrame(
+                        [
+                            {"field": "video_id", "value": display_value(submission.get("video_id"))},
+                            {"field": "creator_username", "value": display_value(submission.get("creator_username"))},
+                            {"field": "views", "value": display_value(submission.get("views"))},
+                            {"field": "likes", "value": display_value(submission.get("likes"))},
+                            {"field": "comments", "value": display_value(submission.get("comments"))},
+                            {"field": "shares", "value": display_value(submission.get("shares"))},
+                            {"field": "saves", "value": display_value(submission.get("saves"))},
+                            {"field": "video_length_sec", "value": display_value(submission.get("video_length_sec"))},
+                            {"field": "graph_pattern", "value": display_value(submission.get("graph_pattern"))},
+                        ]
+                    ),
+                    width="stretch",
+                )
+                st.markdown("**Creator Baseline:**")
+                st.dataframe(
+                    pd.DataFrame(
+                        [
+                            {"field": "avg_views_30d", "value": display_value(history.get("avg_views_30d"))},
+                            {"field": "baseline_source", "value": display_value(history.get("baseline_source"))},
+                            {"field": "baseline_post_count", "value": display_value(history.get("baseline_post_count"))},
+                            {"field": "history_posts_count", "value": display_value(history.get("history_posts_count"))},
+                            {"field": "max_history_views", "value": display_value(history.get("max_history_views"))},
+                            {"field": "median_history_views", "value": display_value(history.get("median_history_views"))},
+                        ]
+                    ),
+                    width="stretch",
+                )
+                with st.expander("Internal model details"):
+                    st.write("Risk score:", tiktok_prediction["risk_score"])
+                    st.write("Risk level:", tiktok_prediction["risk_level"])
+                    st.write("Predicted class:", tiktok_prediction["predicted_class"])
+                    st.write("Graph analysis:", tiktok_prediction["review"]["graph_analysis"])
+                    st.write("Suspicious signals:", tiktok_prediction["review"]["suspicious_signals"])
+                    st.write("Missing evidence:", tiktok_prediction["review"]["missing_evidence_needed"])
+                    if st.checkbox("Show raw TikTok API review JSON"):
+                        st.json(safe_json({**tiktok_context, "prediction": tiktok_prediction}))
 
 
 with tab_screenshot:
